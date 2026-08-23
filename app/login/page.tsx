@@ -185,7 +185,7 @@ export default function LoginPage() {
                   value={memberId}
                   onChange={(e) => setMemberId(e.target.value)}
                   className="mt-2 w-full rounded-xl border border-[#D3C5B9] px-4 py-3 focus:outline-none focus:ring-2 focus:ring-brand"
-                  placeholder="例：A123456"
+                  placeholder="例：よちヨチ保育園2026"
                   required
                 />
               </label>
@@ -238,7 +238,7 @@ export default function LoginPage() {
                   value={regMemberId}
                   onChange={(e) => setRegMemberId(e.target.value)}
                   className="mt-2 w-full rounded-xl border border-[#D3C5B9] px-4 py-3 focus:outline-none focus:ring-2 focus:ring-brand"
-                  placeholder="例：A123456"
+                  placeholder="例：よちヨチ保育園2026"
                   required
                 />
               </label>
