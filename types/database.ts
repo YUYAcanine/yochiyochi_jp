@@ -67,6 +67,7 @@ export type Accident = {
   garden_id: string | null;
   child_id: string | null;
   food_id: number;
+  food_name: string | null;
   content: string;
   is_public: boolean;
   created_at: string;

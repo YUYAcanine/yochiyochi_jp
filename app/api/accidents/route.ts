@@ -12,6 +12,7 @@ type AccidentRow = {
   created_at: string;
   child_id: string | null;
   food_id: number | null;
+  food_name: string | null;
   content: string | null;
   is_public: boolean | null;
   garden_id: string | null;
@@ -59,7 +60,12 @@ const mapAccidentItems = async (
   const childNameMap = new Map<string, string>(childRows.map((row) => [row.id, (row.name ?? "").trim()]));
 
   const foodIds = Array.from(
-    new Set(accidents.map((row) => row.food_id).filter((id): id is number => typeof id === "number"))
+    new Set(
+      accidents
+        .filter((row) => !row.food_name?.trim())
+        .map((row) => row.food_id)
+        .filter((id): id is number => typeof id === "number")
+    )
   );
   const foodNameMap = await buildFoodNameMap(client, foodIds);
 
@@ -69,7 +75,11 @@ const mapAccidentItems = async (
     // is_public=trueの行は未ログインの第三者にも配信されるため、
     // 園児の実名(PII)は includeChildName=false のときは含めない。
     child_name: options.includeChildName && row.child_id ? childNameMap.get(row.child_id) ?? "" : "",
-    food_name: typeof row.food_id === "number" ? foodNameMap.get(row.food_id) ?? "" : "",
+    // 園独自食材は未ログインからfoodsを引けずRLSで空になりうるため、
+    // 報告時点の食材名(food_name)をそのまま優先して表示する。
+    food_name:
+      row.food_name?.trim() ||
+      (typeof row.food_id === "number" ? foodNameMap.get(row.food_id) ?? "" : ""),
     accident_content: row.content ?? "",
     public: row.is_public,
     // 実際の garden_id は個人特定につながりうるため返却せず、真偽値のみ渡す
@@ -88,7 +98,7 @@ export async function GET(req: NextRequest) {
       // 公開フィードは未ログインでも見られる（RLSのis_public=true許可による）
       const { data: accidentData, error: accidentError } = await supabase
         .from("accidents")
-        .select("id, created_at, child_id, food_id, content, is_public, garden_id")
+        .select("id, created_at, child_id, food_id, food_name, content, is_public, garden_id")
         .eq("is_public", true)
         .order("created_at", { ascending: false })
         .limit(normalizedLimit)
@@ -169,6 +179,7 @@ export async function POST(req: NextRequest) {
       garden_id: gardenId,
       child_id: childId,
       food_id: resolvedFoodId,
+      food_name: food_name.trim(),
       content: accident_content,
       is_public: Boolean(isPublic),
     });
@@ -216,6 +227,7 @@ export async function PUT(req: NextRequest) {
         {
           child_id: childId,
           food_id: resolvedFoodId,
+          food_name: food_name.trim(),
           content: accident_content,
           is_public: Boolean(isPublic),
         },
