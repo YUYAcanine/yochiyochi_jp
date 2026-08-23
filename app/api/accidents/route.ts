@@ -80,6 +80,9 @@ const mapAccidentItems = async (
     food_name:
       row.food_name?.trim() ||
       (typeof row.food_id === "number" ? foodNameMap.get(row.food_id) ?? "" : ""),
+    // 食材名が改名されて現在の食材一覧と一致しなくなっても、編集時に
+    // 元の食材との紐付けを保てるようfood_idも返す。
+    food_id: row.food_id,
     accident_content: row.content ?? "",
     public: row.is_public,
     // 実際の garden_id は個人特定につながりうるため返却せず、真偽値のみ渡す
@@ -121,7 +124,7 @@ export async function GET(req: NextRequest) {
 
     const { data: accidentData, error: accidentError } = await authedSupabase
       .from("accidents")
-      .select("id, created_at, child_id, food_id, content, is_public, garden_id")
+      .select("id, created_at, child_id, food_id, food_name, content, is_public, garden_id")
       .eq("garden_id", gardenId)
       .order("created_at", { ascending: false })
       .limit(normalizedLimit)

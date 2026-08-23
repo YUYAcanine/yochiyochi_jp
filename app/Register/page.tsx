@@ -44,6 +44,7 @@ type AccidentItem = {
   id: string;
   child_name: string;
   food_name: string;
+  food_id: number | null;
   accident_content: string;
   public: boolean | null;
   created_at: string;
@@ -186,6 +187,9 @@ export default function Page4() {
   const [accidentDetail, setAccidentDetail] = useState("");
   const [accidentPublic, setAccidentPublic] = useState(false);
   const [editingAccidentId, setEditingAccidentId] = useState<string | null>(null);
+  // 食材が改名され食材名から逆引きできなくなった場合に備え、
+  // 編集開始時点のfood_idを保持しておくフォールバック用。
+  const [editingAccidentFoodId, setEditingAccidentFoodId] = useState<number | null>(null);
   const [cookFoodName, setCookFoodName] = useState("");
   const [cookDrafts, setCookDrafts] = useState<CookDrafts>({
     phase1: "",
@@ -406,6 +410,7 @@ export default function Page4() {
     setAccidentDetail("");
     setAccidentPublic(false);
     setEditingAccidentId(null);
+    setEditingAccidentFoodId(null);
     setCookFoodName("");
     setCookEditTargetName(null);
     setCookDrafts({
@@ -541,6 +546,7 @@ export default function Page4() {
         accidentItems.find((item) => item.food_name === name);
       if (target) {
         setEditingAccidentId(target.id);
+        setEditingAccidentFoodId(target.food_id ?? null);
         setAccidentChildName(target.child_name);
         setAccidentFood(target.food_name);
         setAccidentDetail(target.accident_content);
@@ -806,7 +812,7 @@ export default function Page4() {
           food_name: accidentFood,
           accident_content: accidentDetail,
           public: accidentPublic,
-          food_id: accidentFoodId,
+          food_id: accidentFoodId ?? editingAccidentFoodId ?? undefined,
         }),
       });
 
@@ -825,6 +831,7 @@ export default function Page4() {
 
   const startInlineAccidentEdit = (item: AccidentItem) => {
     setEditingAccidentId(item.id);
+    setEditingAccidentFoodId(item.food_id ?? null);
     setAccidentChildName(item.child_name);
     setAccidentFood(item.food_name);
     setAccidentDetail(item.accident_content);
@@ -835,6 +842,7 @@ export default function Page4() {
 
   const cancelInlineAccidentEdit = () => {
     setEditingAccidentId(null);
+    setEditingAccidentFoodId(null);
     setAccidentChildName("");
     setAccidentFood("");
     setAccidentDetail("");
@@ -888,7 +896,7 @@ export default function Page4() {
           food_name: accidentFood,
           accident_content: accidentDetail,
           public: accidentPublic,
-          food_id: accidentFoodId,
+          food_id: accidentFoodId ?? editingAccidentFoodId ?? undefined,
         }),
       });
 
@@ -897,6 +905,7 @@ export default function Page4() {
       setFormMsg("更新しました。");
       setReloadTick((prev) => prev + 1);
       setEditingAccidentId(null);
+      setEditingAccidentFoodId(null);
     } catch {
       setFormMsg("更新に失敗しました。");
     } finally {
