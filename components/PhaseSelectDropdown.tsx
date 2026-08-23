@@ -56,7 +56,7 @@ export default function PhaseSelectDropdown({
         <button
           type="button"
           onClick={() => setOpen((prev) => !prev)}
-          className="flex h-10 min-w-[170px] items-center justify-between gap-2 rounded-lg border-2 border-brand bg-[#FBF3EC] px-3 text-sm font-semibold text-[#2F2A27] shadow-sm outline-none sm:min-w-[190px] sm:text-base"
+          className="flex h-10 min-w-[170px] items-center justify-between gap-2 whitespace-nowrap rounded-lg border-2 border-brand bg-[#FBF3EC] px-3 text-sm font-semibold text-[#2F2A27] shadow-sm outline-none sm:min-w-[190px] sm:text-base"
           aria-haspopup="listbox"
           aria-expanded={open}
           aria-label="時期を選択"
@@ -72,7 +72,7 @@ export default function PhaseSelectDropdown({
           <ul
             role="listbox"
             aria-label="時期の選択肢"
-            className="absolute left-0 right-0 z-50 mt-1 overflow-hidden rounded-lg border-2 border-brand bg-white shadow-md"
+            className="absolute left-0 z-50 mt-1 w-max min-w-full overflow-hidden rounded-lg border-2 border-brand bg-white shadow-md"
           >
             {keys.map((key) => {
               const selected = key === phase;
@@ -81,7 +81,7 @@ export default function PhaseSelectDropdown({
                   <button
                     type="button"
                     onClick={() => handleSelect(key)}
-                    className={`flex w-full items-baseline gap-2 px-3 py-2 text-left text-sm ${
+                    className={`flex w-full items-baseline gap-2 whitespace-nowrap px-3 py-2 text-left text-sm ${
                       selected
                         ? "bg-[#F0E4D8] font-semibold text-[#2F2A27]"
                         : "text-[#2F2A27] hover:bg-[#F8F3EE]"
