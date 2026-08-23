@@ -1291,7 +1291,11 @@ export default function Page4() {
                 onClick={handleAddClick}
                 className="text-base font-bold text-blue-600 underline underline-offset-2 hover:text-blue-700"
               >
-                {activeTab === "hiyari" ? "ヒヤリハットを追加する" : "園児を追加する"}
+                {activeTab === "hiyari"
+                  ? "ヒヤリハットを追加する"
+                  : activeTab === "cook"
+                    ? "食材を追加する"
+                    : "園児を追加する"}
               </button>
             </div>
           )}
