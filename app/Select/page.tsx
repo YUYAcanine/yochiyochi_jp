@@ -94,7 +94,7 @@ export default function Page2() {
   const router = useRouter();
 
   // 現在のフェーズ
-  const { phase, setPhase, children } = useChecklist();
+  const { phase, setPhase } = useChecklist();
 
   const [memberId, setMemberId] = useState<string | null>(null);
   const [isEditingCook, setIsEditingCook] = useState(false);
@@ -222,8 +222,7 @@ export default function Page2() {
 
   const childFoodMap = useMemo(() => {
     const map = new Map<string, Array<{ name: string; note: string | null; canEat: boolean }>>();
-    const mergedChildren = [...children, ...enjiFoodItems];
-    for (const child of mergedChildren) {
+    for (const child of enjiFoodItems) {
       const items = (child.no_eat ?? "")
         .split(/[,\s/\u3001\u30fb\uFF0C\uFF0F]+/)
         .map((item) => canon(item))
@@ -236,7 +235,7 @@ export default function Page2() {
       }
     }
     return map;
-  }, [children, enjiFoodItems]);
+  }, [enjiFoodItems]);
 
   const accidentFoodMap = useMemo(() => {
     const map = new Map<string, Array<{ name: string; content: string }>>();
