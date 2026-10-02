@@ -126,6 +126,20 @@ export function useMenuData(reloadTick?: number) {
           const gardenMethodsByFoodId = new Map<number, CookingMethodRow>();
           (gardenMethods ?? []).forEach((row) => gardenMethodsByFoodId.set(row.food_id, row));
 
+          // 共通食材に対して園が保存した調理方法も反映する。
+          // 別名キーは同じオブジェクトを参照しているので、差し替えずに上書きする。
+          (gardenMethods ?? []).forEach((row) => {
+            const key = idToKey.get(row.food_id);
+            if (!key || !map[key]) return;
+            Object.assign(map[key], {
+              phase1: row.phase1?.trim() ?? map[key].phase1,
+              phase2: row.phase2?.trim() ?? map[key].phase2,
+              phase3: row.phase3?.trim() ?? map[key].phase3,
+              phase4: row.phase4?.trim() ?? map[key].phase4,
+              phase5: row.phase5?.trim() ?? map[key].phase5,
+            });
+          });
+
           (gardenFoods ?? []).forEach((food) => {
             const displayName = (food.name ?? "").trim();
             if (displayName) nameSet.add(displayName);

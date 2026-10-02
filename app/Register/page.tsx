@@ -218,7 +218,7 @@ export default function Page4() {
   const [listLoading, setListLoading] = useState(false);
   const [reloadTick, setReloadTick] = useState(0);
 
-  const { menuMap, foodIdMap, foodNameOptions } = useMenuData(reloadTick);
+  const { menuMap, foodIdMap, foodNameOptions, canonicalNameMap } = useMenuData(reloadTick);
 
   const accidentFoodId = useMemo(() => {
     const key = canon(accidentFood);
@@ -339,9 +339,11 @@ export default function Page4() {
       if (t > prev) latestMap.set(name, t);
     };
 
+    // 園児パネルは登録済みの園児(enji-info)だけから作る。
+    // ヒヤリハットは園児が削除されると child_name が空で返るため、混ぜると名前のない空パネルが残る。
     if (activeTab === "child") {
-      for (const item of answerItems) addLatest(item.child_name, item.created_at);
-      for (const item of accidentItems) {
+      for (const item of answerItems) {
+        if (!item.child_name.trim()) continue;
         addLatest(item.child_name, item.created_at);
       }
     }
@@ -350,7 +352,7 @@ export default function Page4() {
       .sort((a, b) => b[1] - a[1])
       .map(([name]) => name)
       .filter((name) => name.toLowerCase().includes(searchText.trim().toLowerCase()));
-  }, [activeTab, answerItems, mealItems, accidentItems, searchText, cookFoodOptions]);
+  }, [activeTab, answerItems, searchText, cookFoodOptions]);
 
   const filteredAccidents = useMemo(() => {
     const q = searchText.trim().toLowerCase();
@@ -650,7 +652,8 @@ export default function Page4() {
     e.preventDefault();
     setFormMsg(null);
 
-    if (!childName || !memberId) {
+    const newName = childName.trim();
+    if (!newName || !memberId) {
       setFormMsg("すべての必須項目を入力してください。");
       return;
     }
@@ -658,7 +661,7 @@ export default function Page4() {
     setSubmitLoading(true);
     try {
       const body = {
-        child_name: childName,
+        child_name: newName,
         age_month: Number(ageMonth),
         no_eat: "",
         can_eat: true,
@@ -676,8 +679,9 @@ export default function Page4() {
 
       setFormMsg("登録しました。食材を追加する場合は続けて登録できます。");
       setReloadTick((prev) => prev + 1);
-      setFoodEditTargetName(childName);
-      setEditingSourceName(childName);
+      setChildName(newName);
+      setFoodEditTargetName(newName);
+      setEditingSourceName(newName);
     } catch {
       setFormMsg("登録に失敗しました。");
     } finally {
@@ -689,37 +693,30 @@ export default function Page4() {
     e.preventDefault();
     setFormMsg(null);
 
-    if (!childName || !memberId) {
+    const nextName = childName.trim();
+    if (!nextName || !memberId) {
       setFormMsg("すべての必須項目を入力してください。");
       return;
     }
 
     setSubmitLoading(true);
     try {
-      const sourceName = editingSourceName ?? childName;
-      const targets = answerItems.filter((item) => item.child_name === sourceName);
+      const res = await authedFetch("/api/enji-info", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode: "child",
+          source_name: editingSourceName ?? nextName,
+          child_name: nextName,
+          age_month: Number(ageMonth),
+        }),
+      });
 
-      if (targets.length === 0) {
-        throw new Error("no rows to update");
+      if (res.status === 409) {
+        setFormMsg("同じ名前の園児がすでに登録されています。");
+        return;
       }
-
-      const requests = targets.map((item) =>
-        authedFetch("/api/enji-info", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            id: item.id,
-            child_name: childName,
-            age_month: Number(ageMonth),
-            no_eat: item.no_eat,
-            can_eat: item.can_eat === true,
-            note: item.note ?? "",
-          }),
-        })
-      );
-
-      const responses = await Promise.all(requests);
-      if (responses.some((res) => !res.ok)) throw new Error("bulk update failed");
+      if (!res.ok) throw new Error("update failed");
 
       setReloadTick((prev) => prev + 1);
       closeInlineEditor();
@@ -734,7 +731,12 @@ export default function Page4() {
     e.preventDefault();
     setFormMsg(null);
 
-    if (!childName || !memberId) {
+    // 食材は編集中の園児に紐づける。未保存の園児名入力を使うと別の園児が作られ、
+    // 食材の移動元が空のパネルとして残ってしまう。
+    const targetChildName = (
+      foodEditTargetName === NEW_CHILD_SENTINEL ? childName : editingSourceName ?? childName
+    ).trim();
+    if (!targetChildName || !memberId) {
       setFormMsg("すべての必須項目を入力してください。");
       return;
     }
@@ -750,7 +752,7 @@ export default function Page4() {
     setSubmitLoading(true);
     try {
       const body = {
-        child_name: childName,
+        child_name: targetChildName,
         age_month: Number(ageMonth),
         no_eat: noEat,
         can_eat: !isNoEatChecked,
@@ -770,8 +772,9 @@ export default function Page4() {
 
       setReloadTick((prev) => prev + 1);
       if (foodEditTargetName === NEW_CHILD_SENTINEL) {
-        setFoodEditTargetName(childName);
-        setEditingSourceName(childName);
+        setChildName(targetChildName);
+        setFoodEditTargetName(targetChildName);
+        setEditingSourceName(targetChildName);
       }
       backToFoodList();
     } catch {
@@ -790,6 +793,14 @@ export default function Page4() {
     setIsNoEatChecked(false);
     setShowFoodForm(false);
     setFormMsg(null);
+  };
+
+  // 編集開始時点の food_id は、食材名を変えていないときだけ引き継ぐ。
+  // 未登録の名前に書き換えた場合まで引き継ぐと、表示名と紐づく食材が食い違う。
+  const resolveAccidentFoodId = () => {
+    if (accidentFoodId != null) return accidentFoodId;
+    const original = accidentItems.find((item) => item.id === editingAccidentId);
+    return original && original.food_name.trim() === accidentFood.trim() ? editingAccidentFoodId : null;
   };
 
   const handleAccidentSubmit = async (e: React.FormEvent) => {
@@ -812,7 +823,7 @@ export default function Page4() {
           food_name: accidentFood,
           accident_content: accidentDetail,
           public: accidentPublic,
-          food_id: accidentFoodId ?? editingAccidentFoodId ?? undefined,
+          food_id: resolveAccidentFoodId() ?? undefined,
         }),
       });
 
@@ -884,6 +895,11 @@ export default function Page4() {
       setFormMsg("すべての必須項目を入力してください。");
       return;
     }
+    const foodId = resolveAccidentFoodId();
+    if (foodId == null) {
+      setFormMsg("登録されている食材を選択してください。");
+      return;
+    }
 
     setSubmitLoading(true);
     try {
@@ -896,7 +912,7 @@ export default function Page4() {
           food_name: accidentFood,
           accident_content: accidentDetail,
           public: accidentPublic,
-          food_id: accidentFoodId ?? editingAccidentFoodId ?? undefined,
+          food_id: foodId,
         }),
       });
 
@@ -926,13 +942,17 @@ export default function Page4() {
       return;
     }
 
+    // 表記だけが違う登録済みの食材（カタカナ/ひらがな等）は同じ食材として更新する。
+    // 入力どおりに送ると同じ調理方法を共有する食材がもう1件作られてしまう。
+    const foodName = canonicalNameMap[canon(cookFoodName)] ?? cookFoodName.trim();
+
     setSubmitLoading(true);
     try {
       const res = await authedFetch("/api/a-cook", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          food_name: cookFoodName.trim(),
+          food_name: foodName,
           ...cookDrafts,
         }),
       });
@@ -1337,7 +1357,7 @@ export default function Page4() {
                       </div>
                       <p className="mt-1 text-sm text-[#6b5a4e]">{item.accident_content}</p>
                       <p className="mt-1 text-xs text-[#8A776A]">
-                        {item.child_name} / {formatDateTime(item.created_at)}
+                        {item.child_name || "園児未設定"} / {formatDateTime(item.created_at)}
                       </p>
                     </div>
                     <button

@@ -24,27 +24,45 @@ type RestrictionRow = {
   created_at: string;
 };
 
+// 前後の空白だけが違う名前も同じ園児として扱う（一覧は trim 済みの名前で表示しているため）
+const findChildIdsByName = async (
+  supabase: SupabaseClient<Database>,
+  gardenId: string,
+  childName: string
+): Promise<string[] | null> => {
+  const { data, error } = await supabase
+    .from("children")
+    .select("id, name")
+    .eq("garden_id", gardenId)
+    .order("created_at", { ascending: true })
+    .returns<Array<{ id: string; name: string | null }>>();
+
+  if (error) {
+    console.error(error);
+    return null;
+  }
+
+  const target = childName.trim();
+  return (data ?? []).filter((row) => (row.name ?? "").trim() === target).map((row) => row.id);
+};
+
 const upsertChild = async (
   supabase: SupabaseClient<Database>,
   gardenId: string,
   childName: string,
   ageMonth: number
 ): Promise<string | null> => {
-  const { data: existing } = await supabase
-    .from("children")
-    .select("id")
-    .eq("garden_id", gardenId)
-    .eq("name", childName)
-    .maybeSingle<{ id: string }>();
+  const existingIds = await findChildIdsByName(supabase, gardenId, childName);
+  if (existingIds == null) return null;
 
-  if (existing?.id) {
-    await supabase.from("children").update({ age_month: ageMonth }).eq("id", existing.id);
-    return existing.id;
+  if (existingIds.length > 0) {
+    await supabase.from("children").update({ age_month: ageMonth }).eq("id", existingIds[0]);
+    return existingIds[0];
   }
 
   const { data, error } = await supabase
     .from("children")
-    .insert({ garden_id: gardenId, name: childName, age_month: ageMonth })
+    .insert({ garden_id: gardenId, name: childName.trim(), age_month: ageMonth })
     .select("id")
     .maybeSingle<{ id: string }>();
 
@@ -60,7 +78,12 @@ export async function POST(req: NextRequest) {
 
     const { child_name, age_month, no_eat, can_eat, note, food_id, mode } = await req.json();
 
-    if (!child_name || typeof age_month !== "number" || Number.isNaN(age_month)) {
+    if (
+      typeof child_name !== "string" ||
+      !child_name.trim() ||
+      typeof age_month !== "number" ||
+      Number.isNaN(age_month)
+    ) {
       return NextResponse.json({ error: "必須項目を入力してください" }, { status: 400 });
     }
 
@@ -106,11 +129,59 @@ export async function PUT(req: NextRequest) {
     if (!ctx) return NextResponse.json({ error: "ログインが必要です" }, { status: 401 });
     const { supabase, gardenId } = ctx;
 
-    const { id, child_name, age_month, no_eat, can_eat, note, food_id } = await req.json();
+    const { id, child_name, age_month, no_eat, can_eat, note, food_id, mode, source_name } =
+      await req.json();
+
+    // 園児名の変更は children を直接更新する。
+    // upsertChild 経由だと新しい名前の園児が別に作られ、元の園児が空のまま残ってしまう。
+    if (mode === "child") {
+      if (
+        typeof source_name !== "string" ||
+        !source_name.trim() ||
+        typeof child_name !== "string" ||
+        !child_name.trim() ||
+        typeof age_month !== "number" ||
+        Number.isNaN(age_month)
+      ) {
+        return NextResponse.json({ error: "必須項目を入力してください" }, { status: 400 });
+      }
+
+      const nextName = child_name.trim();
+      const sourceIds = await findChildIdsByName(supabase, gardenId, source_name);
+      if (sourceIds == null) {
+        return NextResponse.json({ error: "更新に失敗しました" }, { status: 500 });
+      }
+      if (sourceIds.length === 0) {
+        return NextResponse.json({ error: "更新対象が見つかりません" }, { status: 404 });
+      }
+
+      if (nextName !== source_name.trim()) {
+        const duplicateIds = await findChildIdsByName(supabase, gardenId, nextName);
+        if (duplicateIds == null) {
+          return NextResponse.json({ error: "更新に失敗しました" }, { status: 500 });
+        }
+        if (duplicateIds.length > 0) {
+          return NextResponse.json({ error: "同じ名前の園児がすでに登録されています" }, { status: 409 });
+        }
+      }
+
+      const { error } = await supabase
+        .from("children")
+        .update({ name: nextName, age_month })
+        .in("id", sourceIds);
+
+      if (error) {
+        console.error(error);
+        return NextResponse.json({ error: "更新に失敗しました" }, { status: 500 });
+      }
+
+      return NextResponse.json({ ok: true });
+    }
 
     if (
       typeof id !== "string" ||
-      !child_name ||
+      typeof child_name !== "string" ||
+      !child_name.trim() ||
       typeof age_month !== "number" ||
       Number.isNaN(age_month) ||
       typeof can_eat !== "boolean"
@@ -251,20 +322,10 @@ export async function DELETE(req: NextRequest) {
 
     // 園児パネル削除: children から削除し、紐づく child_food_restrictions も削除
     if (delete_child === true && typeof child_name === "string" && child_name.trim()) {
-      const targetName = child_name.trim();
-      const { data: childRows, error: childError } = await supabase
-        .from("children")
-        .select("id")
-        .eq("garden_id", gardenId)
-        .eq("name", targetName)
-        .returns<Array<{ id: string }>>();
-
-      if (childError) {
-        console.error(childError);
+      const childIds = await findChildIdsByName(supabase, gardenId, child_name);
+      if (childIds == null) {
         return NextResponse.json({ error: "削除に失敗しました" }, { status: 500 });
       }
-
-      const childIds = (childRows ?? []).map((row) => row.id);
       if (childIds.length === 0) {
         return NextResponse.json({ ok: true });
       }
