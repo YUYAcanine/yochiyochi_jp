@@ -10,7 +10,7 @@ export const runtime = "nodejs";
 // service role client（supabaseAdmin）で操作する。
 export async function DELETE(req: NextRequest) {
   try {
-    const ctx = await getAuthedContext(req);
+    const ctx = await getAuthedContext(req, { fresh: true });
     if (!ctx) return NextResponse.json({ error: "ログインが必要です" }, { status: 401 });
     const { userId, gardenId } = ctx;
 

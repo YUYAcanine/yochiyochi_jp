@@ -30,16 +30,6 @@ type AnswerItem = {
   created_at: string;
 };
 
-type MealItem = {
-  id: string;
-  child_name: string;
-  age_month: number;
-  food_name: string;
-  detail: string | null;
-  record_type: "growth" | "hiyari";
-  created_at: string;
-};
-
 type AccidentItem = {
   id: string;
   child_name: string;
@@ -62,6 +52,8 @@ type SuggestionInputProps = {
   unregisteredMessage?: string;
   duplicateMessage?: string;
   disableSuggestions?: boolean;
+  // 正規化した名前（別名を含む）→ 登録名。渡すと別名での入力も登録済みとして扱う。
+  aliasMap?: Record<string, string>;
 };
 
 const formatDateTime = (value: string) => {
@@ -73,6 +65,29 @@ const formatDateTime = (value: string) => {
   const hh = String(date.getHours()).padStart(2, "0");
   const mi = String(date.getMinutes()).padStart(2, "0");
   return `${yyyy}/${mm}/${dd} ${hh}:${mi}`;
+};
+
+// 一覧の取得。失敗したときは null を返す。
+const fetchAnswerItems = async (): Promise<AnswerItem[] | null> => {
+  try {
+    const res = await authedFetch("/api/enji-info", { cache: "no-store" });
+    if (!res.ok) return null;
+    const json = await res.json();
+    return (Array.isArray(json) ? json : json.items ?? []) as AnswerItem[];
+  } catch {
+    return null;
+  }
+};
+
+const fetchAccidentItems = async (): Promise<AccidentItem[] | null> => {
+  try {
+    const res = await authedFetch(`/api/accidents?limit=200`, { cache: "no-store" });
+    if (!res.ok) return null;
+    const json = await res.json();
+    return (Array.isArray(json) ? json : json.items ?? []) as AccidentItem[];
+  } catch {
+    return null;
+  }
 };
 
 function SuggestionInput({
@@ -87,6 +102,7 @@ function SuggestionInput({
   unregisteredMessage,
   duplicateMessage,
   disableSuggestions,
+  aliasMap,
 }: SuggestionInputProps) {
   const [open, setOpen] = useState(false);
 
@@ -104,11 +120,19 @@ function SuggestionInput({
     const q = canon(value.trim());
     if (!q) return unique;
 
-    return unique.filter((item) => {
-      const c = canon(item);
-      return c.includes(q) || q.includes(c);
-    });
-  }, [value, options, type, disableSuggestions]);
+    const matched = new Set(
+      unique.filter((item) => {
+        const c = canon(item);
+        return c.includes(q) || q.includes(c);
+      })
+    );
+    // 別名（ひらがな表記など）で一致した食材も、登録名で候補に出す
+    for (const [key, name] of Object.entries(aliasMap ?? {})) {
+      if (key.includes(q) || q.includes(key)) matched.add(name);
+    }
+
+    return unique.filter((item) => matched.has(item));
+  }, [value, options, type, disableSuggestions, aliasMap]);
 
   const showDropdown = type === "text" && open && suggestions.length > 0;
 
@@ -116,15 +140,17 @@ function SuggestionInput({
     if (!unregisteredMessage) return false;
     const q = canon(value.trim());
     if (!q) return false;
+    if (aliasMap?.[q]) return false;
     return !options.some((item) => canon(item.trim()) === q);
-  }, [value, options, unregisteredMessage]);
+  }, [value, options, unregisteredMessage, aliasMap]);
 
   const isDuplicate = useMemo(() => {
     if (!duplicateMessage) return false;
     const q = canon(value.trim());
     if (!q) return false;
+    if (aliasMap?.[q]) return true;
     return options.some((item) => canon(item.trim()) === q);
-  }, [value, options, duplicateMessage]);
+  }, [value, options, duplicateMessage, aliasMap]);
 
   return (
     <div className={`relative ${wrapperClassName ?? ""}`}>
@@ -213,12 +239,11 @@ export default function Page4() {
   const [cookEditTargetName, setCookEditTargetName] = useState<string | null>(null);
 
   const [answerItems, setAnswerItems] = useState<AnswerItem[]>([]);
-  const [mealItems, setMealItems] = useState<MealItem[]>([]);
   const [accidentItems, setAccidentItems] = useState<AccidentItem[]>([]);
   const [listLoading, setListLoading] = useState(false);
-  const [reloadTick, setReloadTick] = useState(0);
+  const [menuReloadTick, setMenuReloadTick] = useState(0);
 
-  const { menuMap, foodIdMap, foodNameOptions, canonicalNameMap } = useMenuData(reloadTick);
+  const { menuMap, foodIdMap, foodNameOptions, canonicalNameMap } = useMenuData(menuReloadTick);
 
   const accidentFoodId = useMemo(() => {
     const key = canon(accidentFood);
@@ -263,63 +288,30 @@ export default function Page4() {
     let cancelled = false;
     const fetchAll = async () => {
       setListLoading(true);
-      try {
-        const [answersRes, mealsRes] = await Promise.all([
-          authedFetch("/api/enji-info", { cache: "no-store" }),
-          authedFetch(`/api/meal-records?limit=200`, { cache: "no-store" }),
-        ]);
-        if (!answersRes.ok || !mealsRes.ok) throw new Error("fetch failed");
+      const [answers, accidents] = await Promise.all([fetchAnswerItems(), fetchAccidentItems()]);
+      if (cancelled) return;
 
-        const answersJson = await answersRes.json();
-        const mealsJson = await mealsRes.json();
-        let nextAccidents: AccidentItem[] = [];
-        try {
-          const accidentsRes = await authedFetch(`/api/accidents?limit=200`, { cache: "no-store" });
-          if (accidentsRes.ok) {
-            const accidentsJson = await accidentsRes.json();
-            nextAccidents = (Array.isArray(accidentsJson)
-              ? accidentsJson
-              : accidentsJson.items ?? []) as AccidentItem[];
-          }
-        } catch {
-          nextAccidents = [];
-        }
-
-        if (cancelled) return;
-
-        const nextAnswers = (Array.isArray(answersJson) ? answersJson : answersJson.items ?? []) as AnswerItem[];
-        const nextMeals = (Array.isArray(mealsJson) ? mealsJson : mealsJson.items ?? []) as MealItem[];
-
-        setAnswerItems(nextAnswers);
-        setMealItems(nextMeals);
-        setAccidentItems(nextAccidents);
-      } catch {
-        if (!cancelled) {
-          setAnswerItems([]);
-          setMealItems([]);
-          setAccidentItems([]);
-        }
-      } finally {
-        if (!cancelled) setListLoading(false);
-      }
+      // 園児情報が取れなかったときは一覧全体を空にする（ヒヤリハットだけの失敗は空扱い）
+      setAnswerItems(answers ?? []);
+      setAccidentItems(answers ? accidents ?? [] : []);
+      setListLoading(false);
     };
 
     fetchAll();
     return () => {
       cancelled = true;
     };
-  }, [memberId, reloadTick]);
+  }, [memberId]);
 
   const childOptions = useMemo(() => {
     const names = [
       ...answerItems.map((item) => item.child_name),
-      ...mealItems.map((item) => item.child_name),
       ...accidentItems.map((item) => item.child_name),
     ]
       .map((name) => name.trim())
       .filter(Boolean);
     return Array.from(new Set(names));
-  }, [answerItems, mealItems, accidentItems]);
+  }, [answerItems, accidentItems]);
 
   const namesForTab = useMemo(() => {
     if (activeTab === "cook") {
@@ -395,6 +387,17 @@ export default function Page4() {
   }, [activeTab, authChecked]);
 
   if (!authChecked) return null;
+
+  // 保存後は関係する一覧だけを取り直す。取得に失敗したときは表示中の内容を残す。
+  const reloadAnswers = async () => {
+    const next = await fetchAnswerItems();
+    if (next) setAnswerItems(next);
+  };
+
+  const reloadAccidents = async () => {
+    const next = await fetchAccidentItems();
+    if (next) setAccidentItems(next);
+  };
 
   const toggleExpanded = (name: string) => {
     setExpandedNames((prev) => ({ ...prev, [name]: !prev[name] }));
@@ -510,7 +513,7 @@ export default function Page4() {
       if (!res.ok) throw new Error("save failed");
 
       setFormMsg("更新しました。");
-      setReloadTick((prev) => prev + 1);
+      setMenuReloadTick((prev) => prev + 1);
       if (typeof window !== "undefined") {
         window.dispatchEvent(new Event("yochi-cook-updated"));
       }
@@ -526,8 +529,7 @@ export default function Page4() {
     const answer =
       answerItems.find((item) => item.child_name === name && item.no_eat.trim().length > 0) ??
       answerItems.find((item) => item.child_name === name);
-    const meal = mealItems.find((item) => item.child_name === name);
-    const month = answer?.age_month ?? meal?.age_month ?? "";
+    const month = answer?.age_month ?? "";
 
     if (activeTab === "child") {
       setChildFormMode("edit");
@@ -574,7 +576,7 @@ export default function Page4() {
       });
       if (!res.ok) throw new Error("delete failed");
       setFormMsg("削除しました。");
-      setReloadTick((prev) => prev + 1);
+      await reloadAnswers();
     } catch {
       setFormMsg("削除に失敗しました。");
     } finally {
@@ -608,7 +610,8 @@ export default function Page4() {
         closeInlineEditor();
       }
       setFormMsg("削除しました。");
-      setReloadTick((prev) => prev + 1);
+      // 園児名はヒヤリハットにも表示されるので両方取り直す
+      await Promise.all([reloadAnswers(), reloadAccidents()]);
     } catch {
       setFormMsg("削除に失敗しました。");
     } finally {
@@ -678,7 +681,7 @@ export default function Page4() {
       if (!res.ok) throw new Error("save failed");
 
       setFormMsg("登録しました。食材を追加する場合は続けて登録できます。");
-      setReloadTick((prev) => prev + 1);
+      await reloadAnswers();
       setChildName(newName);
       setFoodEditTargetName(newName);
       setEditingSourceName(newName);
@@ -718,7 +721,8 @@ export default function Page4() {
       }
       if (!res.ok) throw new Error("update failed");
 
-      setReloadTick((prev) => prev + 1);
+      // 園児名はヒヤリハットにも表示されるので両方取り直す
+      await Promise.all([reloadAnswers(), reloadAccidents()]);
       closeInlineEditor();
     } catch {
       setFormMsg("保存に失敗しました。");
@@ -770,7 +774,7 @@ export default function Page4() {
 
       if (!res.ok) throw new Error("save failed");
 
-      setReloadTick((prev) => prev + 1);
+      await reloadAnswers();
       if (foodEditTargetName === NEW_CHILD_SENTINEL) {
         setChildName(targetChildName);
         setFoodEditTargetName(targetChildName);
@@ -830,7 +834,7 @@ export default function Page4() {
       if (!res.ok) throw new Error("save failed");
 
       setFormMsg(editingAccidentId != null ? "更新しました。" : "登録しました。");
-      setReloadTick((prev) => prev + 1);
+      await reloadAccidents();
       resetForms();
       setShowForm(false);
     } catch {
@@ -879,7 +883,7 @@ export default function Page4() {
         cancelInlineAccidentEdit();
       }
       setFormMsg("削除しました。");
-      setReloadTick((prev) => prev + 1);
+      await reloadAccidents();
     } catch {
       setFormMsg("削除に失敗しました。");
     } finally {
@@ -919,7 +923,7 @@ export default function Page4() {
       if (!res.ok) throw new Error("save failed");
 
       setFormMsg("更新しました。");
-      setReloadTick((prev) => prev + 1);
+      await reloadAccidents();
       setEditingAccidentId(null);
       setEditingAccidentFoodId(null);
     } catch {
@@ -959,7 +963,7 @@ export default function Page4() {
       if (!res.ok) throw new Error("save failed");
 
       setFormMsg("登録しました。");
-      setReloadTick((prev) => prev + 1);
+      setMenuReloadTick((prev) => prev + 1);
       if (typeof window !== "undefined") {
         window.dispatchEvent(new Event("yochi-cook-updated"));
       }
@@ -1065,81 +1069,6 @@ export default function Page4() {
             </div>
           )}
         </div>
-      </div>
-    );
-  };
-
-  const renderMealPanel = (name: string, type: "growth" | "hiyari") => {
-    const items = mealItems.filter(
-      (item) => item.child_name === name && item.record_type === type
-    );
-
-    return (
-      <div key={name} className="rounded-md border border-[#E6D7C8] bg-white p-4">
-        <div
-          role="button"
-          tabIndex={0}
-          onClick={() => toggleExpanded(name)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
-              toggleExpanded(name);
-            }
-          }}
-          className="flex cursor-pointer items-center justify-between"
-        >
-          <div className="text-left text-lg font-bold text-[#5C3A2E]">{name}</div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                toggleExpanded(name);
-              }}
-              className="rounded p-1 text-[#2f2a27]"
-              aria-label={`${name}を${expandedNames[name] ? "収納" : "展開"}`}
-            >
-              {expandedNames[name] ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
-            </button>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                openEditorForName(name);
-              }}
-              className="rounded p-1 text-[#2f2a27] hover:bg-[#e7ddd3]"
-              aria-label={`${name}を編集`}
-            >
-              <Pencil size={18} />
-            </button>
-          </div>
-        </div>
-
-        {expandedNames[name] && (
-          <div className="mt-4 space-y-2">
-            <div className="flex items-center justify-between text-[#2f2a27]">
-              <h3 className="text-lg font-bold">
-                {type === "growth" ? "調理方法" : "ヒヤリハット"}
-              </h3>
-            </div>
-            {items.length > 0 ? (
-              items.slice(0, 5).map((item) => (
-                <div
-                  key={item.id}
-                  className={`rounded-md border border-[#E6D7C8] p-3 ${
-                    type === "growth" ? "bg-[#eef1da]" : "bg-[#F9F4E8]"
-                  }`}
-                >
-                  <p className="text-base font-bold text-[#2f2a27]">{item.food_name}</p>
-                  {item.detail && <p className="text-sm text-[#2f2a27]">{item.detail}</p>}
-                  <p className="mt-1 text-xs text-[#6b5a4e]">{formatDateTime(item.created_at)}</p>
-                </div>
-              ))
-            ) : (
-              <p className="text-sm text-[#6b5a4e]">記録がありません。</p>
-            )}
-          </div>
-        )}
       </div>
     );
   };
@@ -1273,6 +1202,7 @@ export default function Page4() {
 	              value={searchText}
 	              onChangeValue={setSearchText}
 	              options={searchBoxOptions}
+	              aliasMap={activeTab === "child" ? undefined : canonicalNameMap}
 	              wrapperClassName="flex-1"
 	              placeholder={
 	                activeTab === "cook" || activeTab === "hiyari"
@@ -1331,11 +1261,7 @@ export default function Page4() {
 
           {!listLoading && activeTab !== "hiyari" &&
             namesForTab.map((name) =>
-              activeTab === "child"
-                ? renderChildPanel(name)
-                : activeTab === "cook"
-                  ? renderCookPanel(name)
-                  : renderMealPanel(name, "hiyari")
+              activeTab === "child" ? renderChildPanel(name) : renderCookPanel(name)
             )}
 
           {!listLoading && activeTab === "hiyari" && (
@@ -1387,6 +1313,7 @@ export default function Page4() {
                   value={cookFoodName}
                   onChangeValue={setCookFoodName}
                   options={cookFoodOptions}
+                  aliasMap={canonicalNameMap}
                   disableSuggestions
                   duplicateMessage="すでに登録されています。"
                   className="mt-1 h-10 w-full rounded-lg border border-[#B7A99A] bg-white px-3 text-base"
@@ -1458,6 +1385,7 @@ export default function Page4() {
                   value={accidentFood}
                   onChangeValue={setAccidentFood}
                   options={cookFoodOptions}
+                  aliasMap={canonicalNameMap}
                   className="mt-1 h-10 w-full rounded-lg border border-[#B7A99A] bg-white px-3 text-base"
                   unregisteredMessage="登録されている食材名を選択してください。調理方法から追加できます。"
                 />
@@ -1533,6 +1461,7 @@ export default function Page4() {
                     value={noEat}
                     onChangeValue={setNoEat}
                     options={cookFoodOptions}
+                    aliasMap={canonicalNameMap}
                     className="mt-1 h-10 w-full rounded-lg border border-[#B7A99A] bg-white px-3 text-base"
                     unregisteredMessage="登録されている食材名を入れてください。調理方法から追加できます。"
                   />
@@ -1767,6 +1696,7 @@ export default function Page4() {
                 value={accidentFood}
                 onChangeValue={setAccidentFood}
                 options={cookFoodOptions}
+                aliasMap={canonicalNameMap}
                 className="mt-1 h-10 w-full rounded border-[2px] border-[#7f7f7f] bg-white px-2"
                 unregisteredMessage="登録されている食材名を選択してください。調理方法から追加できます。"
               />

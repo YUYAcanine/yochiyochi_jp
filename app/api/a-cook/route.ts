@@ -39,14 +39,27 @@ export async function POST(req: NextRequest) {
       phase5: toText(body.phase5),
     };
 
-    // 共通食材（garden_id is null）に同名があればそれを使う
-    const { data: globalFood, error: globalFoodError } = await supabase
-      .from("foods")
-      .select("id")
-      .is("garden_id", null)
-      .eq("name", foodName)
-      .limit(1)
-      .maybeSingle<{ id: number }>();
+    // 共通食材（garden_id is null）に同名があればそれを使い、なければ園独自食材を探す。
+    // 2つの検索は互いに依存しないので同時に行う。
+    const [
+      { data: globalFood, error: globalFoodError },
+      { data: gardenFood, error: gardenFoodError },
+    ] = await Promise.all([
+      supabase
+        .from("foods")
+        .select("id")
+        .is("garden_id", null)
+        .eq("name", foodName)
+        .limit(1)
+        .maybeSingle<{ id: number }>(),
+      supabase
+        .from("foods")
+        .select("id")
+        .eq("garden_id", gardenId)
+        .eq("name", foodName)
+        .limit(1)
+        .maybeSingle<{ id: number }>(),
+    ]);
 
     if (globalFoodError) {
       console.error(globalFoodError);
@@ -56,14 +69,6 @@ export async function POST(req: NextRequest) {
     let foodId = globalFood?.id ?? null;
 
     if (foodId == null) {
-      const { data: gardenFood, error: gardenFoodError } = await supabase
-        .from("foods")
-        .select("id")
-        .eq("garden_id", gardenId)
-        .eq("name", foodName)
-        .limit(1)
-        .maybeSingle<{ id: number }>();
-
       if (gardenFoodError) {
         console.error(gardenFoodError);
         return NextResponse.json({ error: "保存に失敗しました" }, { status: 500 });

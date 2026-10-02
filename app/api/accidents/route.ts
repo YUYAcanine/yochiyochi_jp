@@ -122,13 +122,21 @@ export async function GET(req: NextRequest) {
     if (!ctx) return NextResponse.json({ error: "ログインが必要です" }, { status: 401 });
     const { supabase: authedSupabase, gardenId } = ctx;
 
-    const { data: accidentData, error: accidentError } = await authedSupabase
-      .from("accidents")
-      .select("id, created_at, child_id, food_id, food_name, content, is_public, garden_id")
-      .eq("garden_id", gardenId)
-      .order("created_at", { ascending: false })
-      .limit(normalizedLimit)
-      .returns<AccidentRow[]>();
+    const [{ data: accidentData, error: accidentError }, { data: childData, error: childError }] =
+      await Promise.all([
+        authedSupabase
+          .from("accidents")
+          .select("id, created_at, child_id, food_id, food_name, content, is_public, garden_id")
+          .eq("garden_id", gardenId)
+          .order("created_at", { ascending: false })
+          .limit(normalizedLimit)
+          .returns<AccidentRow[]>(),
+        authedSupabase
+          .from("children")
+          .select("id, name")
+          .eq("garden_id", gardenId)
+          .returns<Array<{ id: string; name: string | null }>>(),
+      ]);
 
     if (accidentError) {
       console.error(accidentError);
@@ -136,11 +144,6 @@ export async function GET(req: NextRequest) {
     }
 
     const accidents = accidentData ?? [];
-    const { data: childData, error: childError } = await authedSupabase
-      .from("children")
-      .select("id, name")
-      .eq("garden_id", gardenId)
-      .returns<Array<{ id: string; name: string | null }>>();
 
     if (childError) {
       console.error(childError);

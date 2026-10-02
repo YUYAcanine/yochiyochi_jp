@@ -24,26 +24,30 @@ type RestrictionRow = {
   created_at: string;
 };
 
-// 前後の空白だけが違う名前も同じ園児として扱う（一覧は trim 済みの名前で表示しているため）
-const findChildIdsByName = async (
+type ChildLookupRow = { id: string; name: string | null; age_month: number | null };
+
+const listChildren = async (
   supabase: SupabaseClient<Database>,
-  gardenId: string,
-  childName: string
-): Promise<string[] | null> => {
+  gardenId: string
+): Promise<ChildLookupRow[] | null> => {
   const { data, error } = await supabase
     .from("children")
-    .select("id, name")
+    .select("id, name, age_month")
     .eq("garden_id", gardenId)
     .order("created_at", { ascending: true })
-    .returns<Array<{ id: string; name: string | null }>>();
+    .returns<ChildLookupRow[]>();
 
   if (error) {
     console.error(error);
     return null;
   }
+  return data ?? [];
+};
 
+// 前後の空白だけが違う名前も同じ園児として扱う（一覧は trim 済みの名前で表示しているため）
+const filterChildrenByName = (rows: ChildLookupRow[], childName: string) => {
   const target = childName.trim();
-  return (data ?? []).filter((row) => (row.name ?? "").trim() === target).map((row) => row.id);
+  return rows.filter((row) => (row.name ?? "").trim() === target);
 };
 
 const upsertChild = async (
@@ -52,12 +56,16 @@ const upsertChild = async (
   childName: string,
   ageMonth: number
 ): Promise<string | null> => {
-  const existingIds = await findChildIdsByName(supabase, gardenId, childName);
-  if (existingIds == null) return null;
+  const rows = await listChildren(supabase, gardenId);
+  if (rows == null) return null;
 
-  if (existingIds.length > 0) {
-    await supabase.from("children").update({ age_month: ageMonth }).eq("id", existingIds[0]);
-    return existingIds[0];
+  const existing = filterChildrenByName(rows, childName)[0];
+  if (existing) {
+    // 月齢が変わっていないときは更新の往復を省く
+    if (existing.age_month !== ageMonth) {
+      await supabase.from("children").update({ age_month: ageMonth }).eq("id", existing.id);
+    }
+    return existing.id;
   }
 
   const { data, error } = await supabase
@@ -147,22 +155,17 @@ export async function PUT(req: NextRequest) {
       }
 
       const nextName = child_name.trim();
-      const sourceIds = await findChildIdsByName(supabase, gardenId, source_name);
-      if (sourceIds == null) {
+      const rows = await listChildren(supabase, gardenId);
+      if (rows == null) {
         return NextResponse.json({ error: "更新に失敗しました" }, { status: 500 });
       }
+      const sourceIds = filterChildrenByName(rows, source_name).map((row) => row.id);
       if (sourceIds.length === 0) {
         return NextResponse.json({ error: "更新対象が見つかりません" }, { status: 404 });
       }
 
-      if (nextName !== source_name.trim()) {
-        const duplicateIds = await findChildIdsByName(supabase, gardenId, nextName);
-        if (duplicateIds == null) {
-          return NextResponse.json({ error: "更新に失敗しました" }, { status: 500 });
-        }
-        if (duplicateIds.length > 0) {
-          return NextResponse.json({ error: "同じ名前の園児がすでに登録されています" }, { status: 409 });
-        }
+      if (nextName !== source_name.trim() && filterChildrenByName(rows, nextName).length > 0) {
+        return NextResponse.json({ error: "同じ名前の園児がすでに登録されています" }, { status: 409 });
       }
 
       const { error } = await supabase
@@ -322,10 +325,11 @@ export async function DELETE(req: NextRequest) {
 
     // 園児パネル削除: children から削除し、紐づく child_food_restrictions も削除
     if (delete_child === true && typeof child_name === "string" && child_name.trim()) {
-      const childIds = await findChildIdsByName(supabase, gardenId, child_name);
-      if (childIds == null) {
+      const rows = await listChildren(supabase, gardenId);
+      if (rows == null) {
         return NextResponse.json({ error: "削除に失敗しました" }, { status: 500 });
       }
+      const childIds = filterChildrenByName(rows, child_name).map((row) => row.id);
       if (childIds.length === 0) {
         return NextResponse.json({ ok: true });
       }

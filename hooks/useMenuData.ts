@@ -60,15 +60,35 @@ export function useMenuData(reloadTick?: number) {
 
     async function fetchMenuData() {
       try {
-        const gardenId = await getCurrentGardenId();
+        // 互いに依存しない取得は同時に行う（園独自分だけは gardenId の解決を待つ）
+        const fetchGardenData = async () => {
+          const gardenId = await getCurrentGardenId();
+          if (!gardenId) return null;
+          const [{ data: gardenFoods }, { data: gardenMethods }] = await Promise.all([
+            supabase.from("foods").select("id, name").eq("garden_id", gardenId).returns<FoodRow[]>(),
+            supabase
+              .from("cooking_methods")
+              .select("food_id, phase1, phase2, phase3, phase4, phase5")
+              .eq("garden_id", gardenId)
+              .returns<CookingMethodRow[]>(),
+          ]);
+          return { gardenFoods, gardenMethods };
+        };
 
-        const [{ data: globalFoods, error: globalFoodsError }, { data: globalMethods }] = await Promise.all([
+        const [
+          { data: globalFoods, error: globalFoodsError },
+          { data: globalMethods },
+          { data: aliasData },
+          gardenData,
+        ] = await Promise.all([
           supabase.from("foods").select("id, name").is("garden_id", null).returns<FoodRow[]>(),
           supabase
             .from("cooking_methods")
             .select("food_id, phase1, phase2, phase3, phase4, phase5")
             .is("garden_id", null)
             .returns<CookingMethodRow[]>(),
+          supabase.from("food_aliases").select("food_id, alias").returns<FoodAliasRow[]>(),
+          fetchGardenData(),
         ]);
 
         if (globalFoodsError || !globalFoods || cancelled) return;
@@ -97,11 +117,6 @@ export function useMenuData(reloadTick?: number) {
           map[key] = toMenuInfo(methodsByFoodId.get(food.id));
         }
 
-        const { data: aliasData } = await supabase
-          .from("food_aliases")
-          .select("food_id, alias")
-          .returns<FoodAliasRow[]>();
-
         (aliasData ?? []).forEach((row) => {
           const canonicalKey = row.food_id != null ? idToKey.get(row.food_id) : undefined;
           const aliasKey = canon(row.alias ?? "");
@@ -113,15 +128,8 @@ export function useMenuData(reloadTick?: number) {
           if (foodId != null) idMap[aliasKey] = foodId;
         });
 
-        if (gardenId) {
-          const [{ data: gardenFoods }, { data: gardenMethods }] = await Promise.all([
-            supabase.from("foods").select("id, name").eq("garden_id", gardenId).returns<FoodRow[]>(),
-            supabase
-              .from("cooking_methods")
-              .select("food_id, phase1, phase2, phase3, phase4, phase5")
-              .eq("garden_id", gardenId)
-              .returns<CookingMethodRow[]>(),
-          ]);
+        if (gardenData) {
+          const { gardenFoods, gardenMethods } = gardenData;
 
           const gardenMethodsByFoodId = new Map<number, CookingMethodRow>();
           (gardenMethods ?? []).forEach((row) => gardenMethodsByFoodId.set(row.food_id, row));
